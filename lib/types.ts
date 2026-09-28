@@ -51,16 +51,8 @@ export const TRANSFER_TRANSITIONS: Record<TransferStatus, TransferStatus[]> = {
 
 export interface Account {
   id: string;
-  /** Human label, e.g. "Flip Settlement - BANK_A" or "User Wallet". */
   name: string;
-  /**
-   * Account role in the ledger:
-   *  - SETTLEMENT: a Flip-owned bank account where user deposits land
-   *  - LIABILITY:  funds we owe (in-flight transfers held on behalf of users)
-   *  - REVENUE:    fees we earn
-   */
   type: "SETTLEMENT" | "LIABILITY" | "REVENUE";
-  /** Cached balance in minor units. Source of truth is the ledger sum. */
   balance: number;
   created_at: string;
 }
@@ -71,7 +63,6 @@ export interface LedgerEntry {
   account_id: string;
   /** Positive = credit into account, negative = debit out of account. */
   amount: number;
-  /** Free-text description of what this entry represents. */
   memo: string;
   created_at: string;
 }
@@ -79,21 +70,13 @@ export interface LedgerEntry {
 export interface Transfer {
   id: string;
   status: TransferStatus;
-  /** Amount the recipient should receive, in minor units. */
   amount: number;
-  /** Flip's fee for this transfer, in minor units (0 for the free tier). */
   fee: number;
-  /** Source bank code the user deposits from, e.g. "BANK_A". */
   source_bank: string;
-  /** The Flip settlement account the user must deposit into. */
   settlement_account_id: string;
-  /** Destination bank code, e.g. "BANK_B". */
   dest_bank: string;
-  /** Destination account number at the destination bank. */
   dest_account_number: string;
-  /** Destination account holder name (for verification/receipt). */
   dest_account_name: string;
-  /** Reason recorded when a transfer fails or expires. */
   failure_reason: string | null;
   created_at: string;
   updated_at: string;

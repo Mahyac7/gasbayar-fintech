@@ -1,24 +1,31 @@
 {
   "name": "gasbayar-fintech",
-  "version": "1.0.0",
-  "description": "MVP interbank transfer system (Flip-style) with double-entry ledger, idempotency, and a mock bank service. Demo build uses an in-memory store (Vercel-ready).",
-  "main": "dist/index.js",
+  "version": "2.0.0",
+  "description": "Flip-style interbank transfer MVP — Next.js full-stack app (double-entry ledger, idempotency, transfer state machine, mock bank). Demo build uses an in-memory store.",
+  "private": true,
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
-    "seed": "ts-node src/scripts/seed.ts",
-    "demo": "ts-node src/scripts/demo.ts"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "demo": "ts-node --compiler-options '{\"module\":\"commonjs\"}' scripts/demo.ts"
   },
-  "keywords": ["transfer", "ledger", "fintech", "mvp", "vercel"],
+  "keywords": ["transfer", "ledger", "fintech", "mvp", "nextjs", "vercel"],
   "license": "MIT",
   "dependencies": {
-    "express": "^4.21.0",
+    "next": "^16.3.6",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "swr": "^2.2.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
     "@types/node": "^22.7.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.0"
   }

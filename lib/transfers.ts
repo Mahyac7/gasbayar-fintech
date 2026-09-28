@@ -1,42 +1,27 @@
 import { randomUUID } from "crypto";
-import * as store from "../store";
+import * as store from "./store";
 import {
   CreateTransferInput,
   Transfer,
   TransferStatus,
   TRANSFER_TRANSITIONS,
-} from "../types";
+} from "./types";
 import * as ledger from "./ledger";
 import * as bank from "./mockBank";
 
 /**
- * Transfer orchestration service.
- *
- * This models the "Flip" flow:
- *
- *   1. createTransfer      — user requests a transfer; we validate the
- *                            destination, pick a settlement account for the
- *                            source bank, record the transfer, and move it to
- *                            AWAITING_FUNDS. Idempotent via an idempotency key.
- *
- *   2. handleFundsReceived — the bank webhook tells us the user's deposit
- *                            landed. We credit our settlement account and our
- *                            liability account (we now owe this money to the
- *                            recipient), then kick off disbursement.
- *
- *   3. disburse            — we ask the destination bank to credit the
- *                            recipient. On success the liability is cleared and
- *                            fee revenue recognised (COMPLETED). On failure the
- *                            transfer is FAILED and then auto-REFUNDED, which
- *                            reverses the liability back to the user.
- *
- * (Demo build: backed by an in-memory store — see src/store.ts.)
+ * Transfer orchestration service — models the "Flip" flow:
+ *   1. createTransfer      — validate destination, record transfer, → AWAITING_FUNDS
+ *   2. handleFundsReceived — deposit webhook: credit settlement + liability, → FUNDS_RECEIVED, then disburse
+ *   3. disburse            — pay recipient; success clears liability + fee revenue (COMPLETED),
+ *                            failure → FAILED → auto REFUNDED.
  */
 
 const LIABILITY_ACCOUNT_NAME = "User Funds Liability";
 const REVENUE_ACCOUNT_NAME = "Fee Revenue";
+export const SOURCE_BANKS = ["BANK_A", "BANK_B", "BANK_C"];
 
-/** Fee policy. The free tier charges nothing (like Flip's free transfers). */
+/** Free tier: no fee (like Flip's free transfers). */
 function computeFee(_amount: number): number {
   return 0;
 }
@@ -47,18 +32,12 @@ export function getTransfer(id: string): Transfer | undefined {
 
 function requireAccountByName(name: string) {
   const a = store.getAccountByName(name);
-  if (!a) {
-    throw new Error(
-      `Required account "${name}" not found — accounts not seeded`
-    );
-  }
+  if (!a) throw new Error(`Required account "${name}" not found — not seeded`);
   return a;
 }
 
-/** Pick the Flip settlement account for a given source bank. */
 function settlementAccountForBank(sourceBank: string) {
-  const name = `Settlement ${sourceBank}`;
-  const a = store.getSettlementAccountByName(name);
+  const a = store.getSettlementAccountByName(`Settlement ${sourceBank}`);
   if (!a) {
     throw new Error(
       `No settlement account configured for source bank "${sourceBank}"`
@@ -67,11 +46,7 @@ function settlementAccountForBank(sourceBank: string) {
   return a;
 }
 
-/**
- * Transition a transfer to a new status, enforcing the state machine. Throws
- * if the transition is not allowed. Persists updated_at and optional
- * failure_reason.
- */
+/** Transition enforcing the state machine. @throws on illegal transitions. */
 export function transition(
   id: string,
   to: TransferStatus,
@@ -79,14 +54,12 @@ export function transition(
 ): Transfer {
   const transfer = getTransfer(id);
   if (!transfer) throw new Error(`Transfer not found: ${id}`);
-
   const allowed = TRANSFER_TRANSITIONS[transfer.status];
   if (!allowed.includes(to)) {
     throw new Error(
       `Illegal transition ${transfer.status} -> ${to} for transfer ${id}`
     );
   }
-
   const updated: Transfer = {
     ...transfer,
     status: to,
@@ -97,27 +70,22 @@ export function transition(
   return updated;
 }
 
-/**
- * Create a transfer. Validates the destination account via a name inquiry and
- * records the transfer as AWAITING_FUNDS. Idempotent: passing the same
- * idempotencyKey returns the already-created transfer.
- */
+/** Create a transfer (idempotent via idempotencyKey). */
 export async function createTransfer(
   input: CreateTransferInput,
   idempotencyKey?: string
 ): Promise<Transfer> {
+  ensureSeeded();
+
   if (idempotencyKey) {
     const existingId = store.getIdempotency(idempotencyKey);
-    if (existingId) {
-      return getTransfer(existingId)!;
-    }
+    if (existingId) return getTransfer(existingId)!;
   }
 
   if (!Number.isInteger(input.amount) || input.amount <= 0) {
     throw new Error("amount must be a positive integer (minor units)");
   }
 
-  // Verify the destination account exists at the destination bank.
   const inquiry = await bank.inquireAccount(
     input.dest_bank,
     input.dest_account_number
@@ -146,31 +114,18 @@ export async function createTransfer(
   };
 
   store.insertTransfer(transfer);
-  if (idempotencyKey) {
-    store.setIdempotency(idempotencyKey, transfer.id);
-  }
+  if (idempotencyKey) store.setIdempotency(idempotencyKey, transfer.id);
 
-  // Move to AWAITING_FUNDS — we now wait for the user's deposit.
   return transition(transfer.id, "AWAITING_FUNDS");
 }
 
-/**
- * Handle the bank's "deposit received" webhook. Credits the settlement account
- * (real cash arrived) and credits the liability account (we now owe the
- * recipient). Then triggers disbursement.
- *
- * Idempotent: if the transfer already progressed past AWAITING_FUNDS, this is
- * a no-op returning the current transfer.
- */
+/** Deposit webhook: credit settlement + liability, then disburse. Idempotent. */
 export async function handleFundsReceived(
   transferId: string
 ): Promise<Transfer> {
   const transfer = getTransfer(transferId);
   if (!transfer) throw new Error(`Transfer not found: ${transferId}`);
-
-  if (transfer.status !== "AWAITING_FUNDS") {
-    return transfer;
-  }
+  if (transfer.status !== "AWAITING_FUNDS") return transfer;
 
   const liability = requireAccountByName(LIABILITY_ACCOUNT_NAME);
   const totalReceived = transfer.amount + transfer.fee;
@@ -192,9 +147,7 @@ export async function handleFundsReceived(
   return disburse(transfer.id);
 }
 
-/**
- * Perform the outbound payout to the destination bank and settle the ledger.
- */
+/** Perform the outbound payout and settle the ledger. */
 export async function disburse(transferId: string): Promise<Transfer> {
   let transfer = getTransfer(transferId);
   if (!transfer) throw new Error(`Transfer not found: ${transferId}`);
@@ -250,10 +203,7 @@ export async function disburse(transferId: string): Promise<Transfer> {
   return transition(transfer.id, "COMPLETED");
 }
 
-/**
- * Refund a failed transfer: reverse the liability and settlement postings so
- * the money is returned to the user.
- */
+/** Refund a failed transfer: reverse liability + settlement postings. */
 export function refund(transferId: string): Transfer {
   const transfer = getTransfer(transferId);
   if (!transfer) throw new Error(`Transfer not found: ${transferId}`);
@@ -262,7 +212,6 @@ export function refund(transferId: string): Transfer {
       `Only FAILED transfers can be refunded (got ${transfer.status})`
     );
   }
-
   const liability = requireAccountByName(LIABILITY_ACCOUNT_NAME);
   const totalReceived = transfer.amount + transfer.fee;
 
@@ -286,13 +235,10 @@ export function listTransfers(): Transfer[] {
   return store.allTransfers();
 }
 
-/**
- * Ensure the core ledger accounts exist in this instance. Because the store is
- * in-memory and resets on cold start, we seed lazily on first use.
- */
+/** Lazily seed the core ledger accounts (in-memory store resets on cold start). */
 export function ensureSeeded(): void {
   if (store.isSeeded()) return;
-  for (const b of ["BANK_A", "BANK_B", "BANK_C"]) {
+  for (const b of SOURCE_BANKS) {
     ledger.createAccount(`Settlement ${b}`, "SETTLEMENT");
   }
   ledger.createAccount(LIABILITY_ACCOUNT_NAME, "LIABILITY");

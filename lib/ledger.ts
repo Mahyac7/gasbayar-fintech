@@ -1,26 +1,19 @@
 import { randomUUID } from "crypto";
-import * as store from "../store";
-import { Account, LedgerEntry } from "../types";
+import * as store from "./store";
+import { Account, LedgerEntry } from "./types";
 
 /**
  * Double-entry ledger.
  *
  * The golden rule: every posting is a set of entries whose amounts sum to
  * exactly zero. Money is never created or destroyed — it only moves between
- * accounts. We enforce that invariant in `post()` and refuse to write an
- * unbalanced set of entries.
- *
- * Sign convention: a positive amount credits (increases) an account, a
- * negative amount debits (decreases) it. The cached `account.balance` is
- * updated alongside each entry so reads are fast, but the true balance is
- * always the sum of ledger entries for that account.
- *
- * (Demo build: backed by an in-memory store — see src/store.ts.)
+ * accounts. Sign convention: positive credits (increases) an account, negative
+ * debits (decreases) it.
  */
 
 export interface PostingLine {
   account_id: string;
-  amount: number; // positive = credit, negative = debit
+  amount: number;
   memo: string;
 }
 
@@ -46,9 +39,7 @@ export function createAccount(name: string, type: Account["type"]): Account {
 
 /**
  * Post a balanced set of ledger entries.
- *
- * @throws if the entries do not sum to zero (unbalanced posting), or if any
- *         referenced account does not exist.
+ * @throws if entries do not sum to zero, or an account is missing.
  */
 export function post(
   transferId: string | null,
@@ -57,19 +48,15 @@ export function post(
   if (lines.length < 2) {
     throw new Error("A posting must have at least two entries");
   }
-
   const sum = lines.reduce((acc, l) => acc + l.amount, 0);
   if (sum !== 0) {
     throw new Error(`Unbalanced posting: entries sum to ${sum}, expected 0`);
   }
-
-  // Validate all accounts exist before mutating anything.
   for (const line of lines) {
     if (!store.getAccountById(line.account_id)) {
       throw new Error(`Account not found: ${line.account_id}`);
     }
   }
-
   const created: LedgerEntry[] = [];
   for (const line of lines) {
     const entry: LedgerEntry = {
@@ -91,10 +78,7 @@ export function entriesForTransfer(transferId: string): LedgerEntry[] {
   return store.ledgerEntriesFor(transferId);
 }
 
-/**
- * Verify the whole ledger is balanced: the sum of every entry across all
- * accounts must be zero. Useful as a reconciliation / integrity check.
- */
+/** Whole-ledger integrity check: every entry across all accounts sums to 0. */
 export function isSystemBalanced(): boolean {
   return store.ledgerTotal() === 0;
 }

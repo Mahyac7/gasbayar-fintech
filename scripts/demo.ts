@@ -1,5 +1,5 @@
-import * as transfers from "../services/transfers";
-import * as ledger from "../services/ledger";
+import * as transfers from "../lib/transfers";
+import * as ledger from "../lib/ledger";
 
 /**
  * End-to-end demo exercising the whole flow without HTTP, against the
@@ -29,9 +29,7 @@ async function main() {
     "demo-key-001"
   );
   console.log(`  created transfer ${t1.id} -> status ${t1.status}`);
-  console.log(`  verified recipient name: ${t1.dest_account_name}`);
 
-  // Idempotency check: same key returns the same transfer.
   const t1Again = await transfers.createTransfer(
     {
       amount: 150_000,
@@ -42,11 +40,8 @@ async function main() {
     },
     "demo-key-001"
   );
-  console.log(
-    `  idempotency: repeat returned same id? ${t1.id === t1Again.id}`
-  );
+  console.log(`  idempotency: repeat returned same id? ${t1.id === t1Again.id}`);
 
-  // Simulate the bank webhook: the user's deposit arrived.
   const t1Done = await transfers.handleFundsReceived(t1.id);
   console.log(`  after funds-received -> status ${t1Done.status}`);
   printAccounts("after happy path");
@@ -57,7 +52,7 @@ async function main() {
       amount: 50_000,
       source_bank: "BANK_A",
       dest_bank: "BANK_C",
-      dest_account_number: "9999000", // ends in 000 -> not found
+      dest_account_number: "9999000",
       dest_account_name: "Ghost",
     });
   } catch (err) {
@@ -65,7 +60,7 @@ async function main() {
   }
 
   console.log("\n=== Scenario 3: disbursement failure -> auto refund ===");
-  process.env.MOCK_BANK_FAILURE_RATE = "1"; // force the destination bank to reject
+  process.env.MOCK_BANK_FAILURE_RATE = "1";
   const t3 = await transfers.createTransfer({
     amount: 75_000,
     source_bank: "BANK_B",
@@ -78,13 +73,8 @@ async function main() {
   if (t3Done.failure_reason) {
     console.log(`  failure_reason: ${t3Done.failure_reason}`);
   }
-  process.env.MOCK_BANK_FAILURE_RATE = "0"; // reset
+  process.env.MOCK_BANK_FAILURE_RATE = "0";
   printAccounts("after failure/refund scenario");
-
-  console.log("\n=== Ledger entries for transfer 1 ===");
-  for (const e of ledger.entriesForTransfer(t1.id)) {
-    console.log(`  ${e.amount >= 0 ? "+" : ""}${e.amount}  ${e.memo}`);
-  }
 
   console.log("\nDemo complete.");
 }
