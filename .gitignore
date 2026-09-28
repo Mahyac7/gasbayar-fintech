@@ -4,3 +4,5 @@ dist/
 *.db-journal
 *.log
 .env
+
+.kiro/
