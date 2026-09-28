@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { db, nowIso } from "../db";
+import * as store from "../store";
 import { Account, LedgerEntry } from "../types";
 
 /**
@@ -11,9 +11,11 @@ import { Account, LedgerEntry } from "../types";
  * unbalanced set of entries.
  *
  * Sign convention: a positive amount credits (increases) an account, a
- * negative amount debits (decreases) it. The cached `accounts.balance` column
- * is updated in the same transaction so reads are fast, but the true balance
- * is always the sum of ledger entries for that account.
+ * negative amount debits (decreases) it. The cached `account.balance` is
+ * updated alongside each entry so reads are fast, but the true balance is
+ * always the sum of ledger entries for that account.
+ *
+ * (Demo build: backed by an in-memory store — see src/store.ts.)
  */
 
 export interface PostingLine {
@@ -23,35 +25,27 @@ export interface PostingLine {
 }
 
 export function getAccount(id: string): Account | undefined {
-  return db.prepare("SELECT * FROM accounts WHERE id = ?").get(id) as
-    | Account
-    | undefined;
+  return store.getAccountById(id);
 }
 
 export function listAccounts(): Account[] {
-  return db.prepare("SELECT * FROM accounts ORDER BY name").all() as Account[];
+  return store.allAccounts();
 }
 
-export function createAccount(
-  name: string,
-  type: Account["type"]
-): Account {
+export function createAccount(name: string, type: Account["type"]): Account {
   const account: Account = {
     id: randomUUID(),
     name,
     type,
     balance: 0,
-    created_at: nowIso(),
+    created_at: store.nowIso(),
   };
-  db.prepare(
-    `INSERT INTO accounts (id, name, type, balance, created_at)
-     VALUES (@id, @name, @type, @balance, @created_at)`
-  ).run(account);
+  store.insertAccount(account);
   return account;
 }
 
 /**
- * Post a balanced set of ledger entries atomically.
+ * Post a balanced set of ledger entries.
  *
  * @throws if the entries do not sum to zero (unbalanced posting), or if any
  *         referenced account does not exist.
@@ -66,50 +60,35 @@ export function post(
 
   const sum = lines.reduce((acc, l) => acc + l.amount, 0);
   if (sum !== 0) {
-    throw new Error(
-      `Unbalanced posting: entries sum to ${sum}, expected 0`
-    );
+    throw new Error(`Unbalanced posting: entries sum to ${sum}, expected 0`);
   }
 
-  const insertEntry = db.prepare(
-    `INSERT INTO ledger_entries (id, transfer_id, account_id, amount, memo, created_at)
-     VALUES (@id, @transfer_id, @account_id, @amount, @memo, @created_at)`
-  );
-  const bumpBalance = db.prepare(
-    `UPDATE accounts SET balance = balance + @delta WHERE id = @account_id`
-  );
-
-  const txn = db.transaction((): LedgerEntry[] => {
-    const created: LedgerEntry[] = [];
-    for (const line of lines) {
-      const account = getAccount(line.account_id);
-      if (!account) {
-        throw new Error(`Account not found: ${line.account_id}`);
-      }
-      const entry: LedgerEntry = {
-        id: randomUUID(),
-        transfer_id: transferId,
-        account_id: line.account_id,
-        amount: line.amount,
-        memo: line.memo,
-        created_at: nowIso(),
-      };
-      insertEntry.run(entry);
-      bumpBalance.run({ delta: line.amount, account_id: line.account_id });
-      created.push(entry);
+  // Validate all accounts exist before mutating anything.
+  for (const line of lines) {
+    if (!store.getAccountById(line.account_id)) {
+      throw new Error(`Account not found: ${line.account_id}`);
     }
-    return created;
-  });
+  }
 
-  return txn();
+  const created: LedgerEntry[] = [];
+  for (const line of lines) {
+    const entry: LedgerEntry = {
+      id: randomUUID(),
+      transfer_id: transferId,
+      account_id: line.account_id,
+      amount: line.amount,
+      memo: line.memo,
+      created_at: store.nowIso(),
+    };
+    store.insertLedgerEntry(entry);
+    store.adjustAccountBalance(line.account_id, line.amount);
+    created.push(entry);
+  }
+  return created;
 }
 
 export function entriesForTransfer(transferId: string): LedgerEntry[] {
-  return db
-    .prepare(
-      "SELECT * FROM ledger_entries WHERE transfer_id = ? ORDER BY created_at"
-    )
-    .all(transferId) as LedgerEntry[];
+  return store.ledgerEntriesFor(transferId);
 }
 
 /**
@@ -117,8 +96,5 @@ export function entriesForTransfer(transferId: string): LedgerEntry[] {
  * accounts must be zero. Useful as a reconciliation / integrity check.
  */
 export function isSystemBalanced(): boolean {
-  const row = db
-    .prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM ledger_entries")
-    .get() as { total: number };
-  return row.total === 0;
+  return store.ledgerTotal() === 0;
 }

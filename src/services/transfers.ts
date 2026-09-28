@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { db, nowIso } from "../db";
+import * as store from "../store";
 import {
   CreateTransferInput,
   Transfer,
@@ -29,10 +29,10 @@ import * as bank from "./mockBank";
  *                            fee revenue recognised (COMPLETED). On failure the
  *                            transfer is FAILED and then auto-REFUNDED, which
  *                            reverses the liability back to the user.
+ *
+ * (Demo build: backed by an in-memory store — see src/store.ts.)
  */
 
-// A single shared liability account holding all in-flight user funds, and a
-// single revenue account for fees. These are created by the seed script.
 const LIABILITY_ACCOUNT_NAME = "User Funds Liability";
 const REVENUE_ACCOUNT_NAME = "Fee Revenue";
 
@@ -41,39 +41,30 @@ function computeFee(_amount: number): number {
   return 0;
 }
 
-function rowToTransfer(row: any): Transfer {
-  return row as Transfer;
-}
-
 export function getTransfer(id: string): Transfer | undefined {
-  const row = db.prepare("SELECT * FROM transfers WHERE id = ?").get(id);
-  return row ? rowToTransfer(row) : undefined;
+  return store.getTransferById(id);
 }
 
 function requireAccountByName(name: string) {
-  const row = db
-    .prepare("SELECT * FROM accounts WHERE name = ?")
-    .get(name) as { id: string } | undefined;
-  if (!row) {
+  const a = store.getAccountByName(name);
+  if (!a) {
     throw new Error(
-      `Required account "${name}" not found — run the seed script first`
+      `Required account "${name}" not found — accounts not seeded`
     );
   }
-  return row;
+  return a;
 }
 
 /** Pick the Flip settlement account for a given source bank. */
 function settlementAccountForBank(sourceBank: string) {
   const name = `Settlement ${sourceBank}`;
-  const row = db
-    .prepare("SELECT * FROM accounts WHERE name = ? AND type = 'SETTLEMENT'")
-    .get(name) as { id: string } | undefined;
-  if (!row) {
+  const a = store.getSettlementAccountByName(name);
+  if (!a) {
     throw new Error(
       `No settlement account configured for source bank "${sourceBank}"`
     );
   }
-  return row;
+  return a;
 }
 
 /**
@@ -96,20 +87,14 @@ export function transition(
     );
   }
 
-  db.prepare(
-    `UPDATE transfers
-       SET status = @status,
-           failure_reason = @failure_reason,
-           updated_at = @updated_at
-     WHERE id = @id`
-  ).run({
-    id,
+  const updated: Transfer = {
+    ...transfer,
     status: to,
     failure_reason: failureReason ?? transfer.failure_reason,
-    updated_at: nowIso(),
-  });
-
-  return getTransfer(id)!;
+    updated_at: store.nowIso(),
+  };
+  store.updateTransfer(updated);
+  return updated;
 }
 
 /**
@@ -121,13 +106,10 @@ export async function createTransfer(
   input: CreateTransferInput,
   idempotencyKey?: string
 ): Promise<Transfer> {
-  // Idempotency: if we've seen this key, return the existing transfer.
   if (idempotencyKey) {
-    const existing = db
-      .prepare("SELECT transfer_id FROM idempotency_keys WHERE key = ?")
-      .get(idempotencyKey) as { transfer_id: string } | undefined;
-    if (existing) {
-      return getTransfer(existing.transfer_id)!;
+    const existingId = store.getIdempotency(idempotencyKey);
+    if (existingId) {
+      return getTransfer(existingId)!;
     }
   }
 
@@ -146,7 +128,7 @@ export async function createTransfer(
 
   const settlement = settlementAccountForBank(input.source_bank);
   const fee = computeFee(input.amount);
-  const now = nowIso();
+  const now = store.nowIso();
 
   const transfer: Transfer = {
     id: randomUUID(),
@@ -163,26 +145,10 @@ export async function createTransfer(
     updated_at: now,
   };
 
-  const writeTransfer = db.transaction(() => {
-    db.prepare(
-      `INSERT INTO transfers
-        (id, status, amount, fee, source_bank, settlement_account_id,
-         dest_bank, dest_account_number, dest_account_name, failure_reason,
-         created_at, updated_at)
-       VALUES
-        (@id, @status, @amount, @fee, @source_bank, @settlement_account_id,
-         @dest_bank, @dest_account_number, @dest_account_name, @failure_reason,
-         @created_at, @updated_at)`
-    ).run(transfer);
-
-    if (idempotencyKey) {
-      db.prepare(
-        `INSERT INTO idempotency_keys (key, transfer_id, created_at)
-         VALUES (?, ?, ?)`
-      ).run(idempotencyKey, transfer.id, now);
-    }
-  });
-  writeTransfer();
+  store.insertTransfer(transfer);
+  if (idempotencyKey) {
+    store.setIdempotency(idempotencyKey, transfer.id);
+  }
 
   // Move to AWAITING_FUNDS — we now wait for the user's deposit.
   return transition(transfer.id, "AWAITING_FUNDS");
@@ -196,11 +162,12 @@ export async function createTransfer(
  * Idempotent: if the transfer already progressed past AWAITING_FUNDS, this is
  * a no-op returning the current transfer.
  */
-export async function handleFundsReceived(transferId: string): Promise<Transfer> {
+export async function handleFundsReceived(
+  transferId: string
+): Promise<Transfer> {
   const transfer = getTransfer(transferId);
   if (!transfer) throw new Error(`Transfer not found: ${transferId}`);
 
-  // Idempotency guard for repeated webhooks.
   if (transfer.status !== "AWAITING_FUNDS") {
     return transfer;
   }
@@ -208,8 +175,6 @@ export async function handleFundsReceived(transferId: string): Promise<Transfer>
   const liability = requireAccountByName(LIABILITY_ACCOUNT_NAME);
   const totalReceived = transfer.amount + transfer.fee;
 
-  // Cash lands in our settlement account (+), and we record a liability we owe
-  // to the recipient (+). Debit/credit must net to zero.
   ledger.post(transfer.id, [
     {
       account_id: transfer.settlement_account_id,
@@ -234,9 +199,7 @@ export async function disburse(transferId: string): Promise<Transfer> {
   let transfer = getTransfer(transferId);
   if (!transfer) throw new Error(`Transfer not found: ${transferId}`);
   if (transfer.status !== "FUNDS_RECEIVED") {
-    throw new Error(
-      `Cannot disburse transfer in status ${transfer.status}`
-    );
+    throw new Error(`Cannot disburse transfer in status ${transfer.status}`);
   }
 
   transfer = transition(transfer.id, "DISBURSING");
@@ -251,16 +214,12 @@ export async function disburse(transferId: string): Promise<Transfer> {
   const revenue = requireAccountByName(REVENUE_ACCOUNT_NAME);
 
   if (!result.ok) {
-    // Payout failed → mark FAILED then auto-refund by reversing the liability
-    // and returning the cash out of the settlement account.
     transition(transfer.id, "FAILED", result.reason ?? "DISBURSEMENT_FAILED");
     return refund(transfer.id);
   }
 
   const totalReceived = transfer.amount + transfer.fee;
 
-  // Success: money leaves the settlement account to the recipient, the
-  // liability is cleared, and the fee is recognised as revenue.
   ledger.post(transfer.id, [
     {
       account_id: transfer.settlement_account_id,
@@ -293,20 +252,20 @@ export async function disburse(transferId: string): Promise<Transfer> {
 
 /**
  * Refund a failed transfer: reverse the liability and settlement postings so
- * the money is returned to the user. In a real system this would trigger a
- * payout back to the user's source account.
+ * the money is returned to the user.
  */
 export function refund(transferId: string): Transfer {
   const transfer = getTransfer(transferId);
   if (!transfer) throw new Error(`Transfer not found: ${transferId}`);
   if (transfer.status !== "FAILED") {
-    throw new Error(`Only FAILED transfers can be refunded (got ${transfer.status})`);
+    throw new Error(
+      `Only FAILED transfers can be refunded (got ${transfer.status})`
+    );
   }
 
   const liability = requireAccountByName(LIABILITY_ACCOUNT_NAME);
   const totalReceived = transfer.amount + transfer.fee;
 
-  // Reverse: cash leaves settlement (refunded to user), liability cleared.
   ledger.post(transfer.id, [
     {
       account_id: transfer.settlement_account_id,
@@ -324,7 +283,18 @@ export function refund(transferId: string): Transfer {
 }
 
 export function listTransfers(): Transfer[] {
-  return db
-    .prepare("SELECT * FROM transfers ORDER BY created_at DESC")
-    .all() as Transfer[];
+  return store.allTransfers();
+}
+
+/**
+ * Ensure the core ledger accounts exist in this instance. Because the store is
+ * in-memory and resets on cold start, we seed lazily on first use.
+ */
+export function ensureSeeded(): void {
+  if (store.isSeeded()) return;
+  for (const b of ["BANK_A", "BANK_B", "BANK_C"]) {
+    ledger.createAccount(`Settlement ${b}`, "SETTLEMENT");
+  }
+  ledger.createAccount(LIABILITY_ACCOUNT_NAME, "LIABILITY");
+  ledger.createAccount(REVENUE_ACCOUNT_NAME, "REVENUE");
 }

@@ -1,4 +1,4 @@
-# Flip-style Interbank Transfer — MVP
+# Gasbayar — Flip-style Interbank Transfer MVP
 
 A small, well-documented MVP that models how an aggregator like **Flip** moves
 money between banks: the user deposits into a **settlement account** the service
@@ -11,12 +11,19 @@ the recipient out via a bank integration. Every movement is recorded in a
 > controls, security audits, and reconciliation with real banks. This project
 > is a learning MVP with a **mock** bank service.
 
+> ⚠️ **Demo storage is in-memory and NOT persistent.** This build keeps all
+> data in process memory so it can run on Vercel with zero external services.
+> Data resets on every cold start / instance recycle, and different serverless
+> instances do not share state. For anything real, swap the store in
+> `src/store.ts` for a database (Postgres/Neon).
+
 ## Tech stack
 
 - Node.js + TypeScript
 - Express (HTTP API)
-- better-sqlite3 (embedded SQLite)
+- In-memory store (`src/store.ts`) — swappable for a real DB
 - zod (request validation)
+- Deployable to Vercel as a serverless function (`api/index.ts` + `vercel.json`)
 
 ## Core concepts demonstrated
 
@@ -84,12 +91,27 @@ curl -s http://localhost:3000/accounts
 curl -s http://localhost:3000/health
 ```
 
+## Deploying to Vercel
+
+This repo is Vercel-ready. The Express app is exported from `api/index.ts` as a
+serverless function, and `vercel.json` rewrites all routes to it.
+
+1. Push this repo to GitHub (already done).
+2. On [vercel.com](https://vercel.com), **Add New… → Project** and import the
+   `gasbayar-fintech` repo.
+3. Framework preset: **Other**. Leave build/output settings at their defaults —
+   Vercel auto-detects the `api/` function. No environment variables required.
+4. Click **Deploy**. When it finishes, open the deployment URL — the landing
+   page (`GET /`) documents the endpoints.
+
+> Remember: this is the **in-memory demo** build. It runs, but state is not
+> shared across instances and resets on cold start.
+
 ## Configuration
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `PORT` | `3000` | HTTP port |
-| `DB_PATH` | `./flip.db` | SQLite file location |
+| `PORT` | `3000` | HTTP port (local dev only) |
 | `MOCK_BANK_FAILURE_RATE` | `0` | Probability (0–1) the mock bank rejects a payout |
 
 Tips for the mock bank (`src/services/mockBank.ts`):
@@ -99,18 +121,21 @@ Tips for the mock bank (`src/services/mockBank.ts`):
 ## Project layout
 
 ```
+api/
+  index.ts               Vercel serverless entrypoint (exports the Express app)
 src/
-  index.ts               app entrypoint (starts the HTTP server)
-  api.ts                 Express routes
-  db.ts                  SQLite connection + schema
+  index.ts               local dev server (app.listen)
+  api.ts                 Express routes + landing page
+  store.ts               in-memory data store (swap for a DB in production)
   types.ts               domain types + transfer state machine
   services/
     ledger.ts            double-entry ledger
     mockBank.ts          simulated bank (name inquiry + disbursement)
     transfers.ts         transfer orchestration
   scripts/
-    seed.ts              create ledger accounts
+    seed.ts              seed ledger accounts (illustrative)
     demo.ts              end-to-end walkthrough
+vercel.json              routes all requests to the serverless function
 ```
 
 ## Where this is intentionally simplified

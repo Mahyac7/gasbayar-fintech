@@ -1,29 +1,10 @@
-import { initSchema, db } from "../db";
-import { createAccount } from "../services/ledger";
 import * as transfers from "../services/transfers";
 import * as ledger from "../services/ledger";
 
 /**
- * End-to-end demo exercising the whole flow without HTTP. Uses a throwaway
- * in-memory-ish DB file (set DB_PATH before importing db in package script).
- *
- * Run with: npm run demo
+ * End-to-end demo exercising the whole flow without HTTP, against the
+ * in-memory store. Run with: npm run demo
  */
-
-function seedAccounts() {
-  const banks = ["BANK_A", "BANK_B", "BANK_C"];
-  for (const b of banks) {
-    if (!db.prepare("SELECT 1 FROM accounts WHERE name = ?").get(`Settlement ${b}`)) {
-      createAccount(`Settlement ${b}`, "SETTLEMENT");
-    }
-  }
-  if (!db.prepare("SELECT 1 FROM accounts WHERE name = ?").get("User Funds Liability")) {
-    createAccount("User Funds Liability", "LIABILITY");
-  }
-  if (!db.prepare("SELECT 1 FROM accounts WHERE name = ?").get("Fee Revenue")) {
-    createAccount("Fee Revenue", "REVENUE");
-  }
-}
 
 function printAccounts(label: string) {
   console.log(`\n--- Account balances (${label}) ---`);
@@ -34,8 +15,7 @@ function printAccounts(label: string) {
 }
 
 async function main() {
-  initSchema();
-  seedAccounts();
+  transfers.ensureSeeded();
 
   console.log("=== Scenario 1: happy-path transfer ===");
   const t1 = await transfers.createTransfer(
@@ -103,9 +83,7 @@ async function main() {
 
   console.log("\n=== Ledger entries for transfer 1 ===");
   for (const e of ledger.entriesForTransfer(t1.id)) {
-    console.log(
-      `  ${e.amount >= 0 ? "+" : ""}${e.amount}  ${e.memo}`
-    );
+    console.log(`  ${e.amount >= 0 ? "+" : ""}${e.amount}  ${e.memo}`);
   }
 
   console.log("\nDemo complete.");
