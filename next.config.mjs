@@ -1,13 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Limit parallelism so the production build stays within the memory budget
-  // of small CI machines (e.g. Vercel's 2-core builders). Prevents worker
-  // crashes during the "Collecting page data" / prerender phase.
-  experimental: {
-    cpus: 1,
-    workerThreads: false,
-  },
+  // Reduce the work Next.js does tracing server files for the output bundle.
+  // The default tracing step ("Collecting build traces") can be heavy on small
+  // CI machines; our lib/ deps are tiny, so we don't need aggressive tracing.
+  outputFileTracingIncludes: {},
 };
 
 export default nextConfig;
