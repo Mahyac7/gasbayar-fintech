@@ -1,0 +1,29 @@
+{
+  "name": "flip-mvp",
+  "version": "1.0.0",
+  "description": "MVP interbank transfer system (Flip-style) with double-entry ledger, idempotency, and a mock bank service",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "seed": "ts-node src/scripts/seed.ts",
+    "demo": "ts-node src/scripts/demo.ts"
+  },
+  "keywords": ["transfer", "ledger", "fintech", "mvp"],
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.21.0",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.7.0",
+    "@types/uuid": "^10.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.0"
+  }
+}
