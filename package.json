@@ -8,11 +8,22 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "next lint",
-    "demo": "ts-node --compiler-options '{\"module\":\"commonjs\"}' scripts/demo.ts"
+    "demo": "ts-node --compiler-options '{\"module\":\"commonjs\"}' scripts/demo.ts",
+    "cap:sync": "cap sync android",
+    "android:apk": "cap sync android && cd android && ./gradlew assembleDebug"
   },
-  "keywords": ["transfer", "ledger", "fintech", "mvp", "nextjs", "vercel"],
+  "keywords": [
+    "transfer",
+    "ledger",
+    "fintech",
+    "mvp",
+    "nextjs",
+    "vercel"
+  ],
   "license": "MIT",
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
     "next": "^16.3.6",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -20,6 +31,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
     "@types/node": "^22.7.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

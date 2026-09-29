@@ -92,6 +92,43 @@ npm run demo     # end-to-end flow in the terminal (no server needed)
 > Because storage is in-memory, data won't be shared across instances and
 > resets on cold start — expected for this demo.
 
+## Android APK
+
+A thin native Android shell (built with **Capacitor**) wraps the live web app
+in a WebView, so the phone app shows exactly the deployed site. The whole UI +
+API run on the server, so the app needs an internet connection.
+
+- Config: `capacitor.config.ts` (points `server.url` at the Vercel domain)
+- Native project: `android/`
+- Offline fallback page: `public-shell/index.html`
+
+### Download the APK (no tools needed)
+
+The APK is built automatically by **GitHub Actions**:
+
+1. Go to the repo's **Actions** tab → **Build Android APK** workflow.
+2. Open the latest successful run (or click **Run workflow** to start one).
+3. Download the **`gasbayar-debug-apk`** artifact — it contains
+   `app-debug.apk`.
+4. Copy it to an Android phone and install (enable "Install unknown apps" for
+   your file manager/browser).
+
+> This is a **debug** APK (unsigned) — fine for testing/sideloading, not for the
+> Play Store.
+
+### Build the APK locally (optional)
+
+Requires Android SDK + JDK 21.
+
+```bash
+npm install
+npx cap sync android
+cd android && ./gradlew assembleDebug
+# output: android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Handy scripts: `npm run cap:sync` and `npm run android:apk`.
+
 ## Configuration
 
 | Env var | Default | Purpose |
