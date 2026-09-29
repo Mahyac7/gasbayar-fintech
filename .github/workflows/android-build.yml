@@ -40,6 +40,14 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Avoid the deprecated legacy 'tools' package (removed from the SDK
+          # repos), which makes the action's default install fail. We install
+          # nothing extra here and let Gradle fetch exactly what it needs.
+          packages: ""
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses >/dev/null 2>&1 || true
 
       - name: Install npm dependencies
         run: npm install
